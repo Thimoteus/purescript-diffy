@@ -2,7 +2,7 @@ module Diffy.Atomic where
 
 import Prelude
 
-class Atomic a where
+class (Eq a, Show a) <= Atomic a where
   atomize :: a -> Atom
   ctor :: a -> String
 
@@ -41,7 +41,7 @@ instance char :: Atomic Char where
 
 instance string :: Atomic String where
   atomize = String
-  ctor _ = "Data.String"
+  ctor _ = "Prim.String"
 
 instance void :: Atomic Void where
   atomize = absurd
@@ -57,11 +57,21 @@ instance atomicAtom :: Atomic Atom where
     Unit -> "Diffy.Atomic.Unit"
 
 newtype Atomizable
-  = Atomizable (∀ r. (∀ a. Atomic a => a -> r) -> r)
+  = Atomizable (forall r. (forall a. Atomic a => a -> r) -> r)
+
+instance eqAtomizable :: Eq Atomizable where
+  eq (Atomizable run) (Atomizable run') =
+    run \a ->
+      run' \b ->
+        ctor a == ctor b &&
+        atomize a == atomize b
+
+instance showAtomizable :: Show Atomizable where
+  show (Atomizable run) = run show
 
 instance atomizable :: Atomic Atomizable where
   atomize (Atomizable run) = run atomize
   ctor (Atomizable run) = run ctor
 
-mkAtomizable :: ∀ a. Atomic a => a -> Atomizable
-mkAtomizable x = Atomizable (_ $ x)
+mk :: forall a. Atomic a => a -> Atomizable
+mk x = Atomizable (_ $ x)

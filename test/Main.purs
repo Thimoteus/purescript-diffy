@@ -3,14 +3,32 @@ module Test.Main where
 import Prelude
 
 import Control.Monad.Writer (WriterT, execWriterT, tell)
-import Data.Foldable (for_)
-import Data.Generic.Rep (class Generic)
-import Diffy (class Diffy, diff)
-import Diffy.Atomic (class Atomic, Atom)
-import Diffy.Callback (DiffCb)
-import Diffy.Generic (genericDiff)
+import Data.Foldable (for_, traverse_)
+import Data.Generic.Rep (class Generic, from)
+import Data.Generic.Rep.Show (genericShow)
+import Data.List (List(Nil), (:))
+import Data.Symbol (class IsSymbol, SProxy(..), reflectSymbol)
+import Data.Tuple (Tuple(..))
+import Diffy (class Diffy, atomicDiff, diffy)
+import Diffy.Atomic (class Atomic, Atomizable, atomize)
+import Diffy.Atomic as Atomic
+import Diffy.Atomic.Generic (genericAtomize, genericCtor)
+import Diffy.Callback as Callback
+import Diffy.Generic (genericDiffy)
+import Diffy.Index (class Indexed, Index, Indexable, index)
+import Diffy.Index as Index
+import Diffy.Ordered (class Ordered, Orderable, size)
+import Diffy.Ordered as Ordered
 import Effect (Effect)
-import Effect.Console (log)
+import Effect.Console as Console
+import Prim.Row as Row
+import Prim.RowList (kind RowList)
+import Prim.RowList as RowList
+import Record as Record
+import Test.Coverage as Test.Coverage
+import Test.Effect as Test.Effect
+import Test.Writer as Test.Writer
+import Type.Row (RLProxy(..))
 
 newtype Address = Address String
 newtype Name = Name String
@@ -20,25 +38,51 @@ data Person
   | NoNumber {name :: Name, address :: Address}
 newtype Phonebook = Phonebook (Array Person)
 
-derive newtype instance atomicAddress :: Atomic Address
-derive newtype instance atomicName :: Atomic Name
-derive newtype instance atomicNumber :: Atomic Phone
+derive instance genericAddress :: Generic Address _
+derive instance genericName :: Generic Name _
+derive instance genericPhone :: Generic Phone _
 
-derive newtype instance diffName :: Diffy Name
-derive newtype instance diffAddress :: Diffy Address
-derive newtype instance diffPhone :: Diffy Phone
+derive instance eqAddress :: Eq Address
+instance showAddress :: Show Address where
+  show x = genericShow x
+instance atomicAddress :: Atomic Address where
+  atomize x = genericAtomize x
+  ctor x = genericCtor x
+instance diffAddress :: Diffy Address where
+  diffy = atomicDiff
+
+derive instance eqName :: Eq Name
+instance showName :: Show Name where
+  show x = genericShow x
+instance atomicName :: Atomic Name where
+  atomize x = genericAtomize x
+  ctor x = genericCtor x
+instance diffName :: Diffy Name where
+  diffy = atomicDiff
+
+derive instance eqPhone :: Eq Phone
+instance showPhone :: Show Phone where
+  show x = genericShow x
+instance atomicPhone :: Atomic Phone where
+  atomize x = genericAtomize x
+  ctor x = genericCtor x
+instance diffPhone :: Diffy Phone where
+  diffy = atomicDiff
 
 derive instance genericPerson :: Generic Person _
 instance diffPerson :: Diffy Person where
-  diff = genericDiff
-derive newtype instance diffPhonebook :: Diffy Phonebook
+  diffy f x y = genericDiffy f x y
+
+derive instance genericPhonebook :: Generic Phonebook _
+instance diffPhoneBook :: Diffy Phonebook where
+  diffy f x y = genericDiffy f x y
 
 pb :: Phonebook
 pb = Phonebook
   [ WithNumber
       { name: Name "Me"
       , address: Address "Here"
-      , number: Phone 0
+      , number: Phone 1000000
       }
   , NoNumber
       { name: Name "You"
@@ -51,12 +95,12 @@ pb' = Phonebook
   [ WithNumber
       { name: Name "Me"
       , address: Address "Where I am"
-      , number: Phone 0
+      , number: Phone 1000000
       }
   , WithNumber
       { name: Name "You"
       , address: Address "There"
-      , number: Phone 1
+      , number: Phone 999999
       }
   , NoNumber
       { name: Name "You"
@@ -64,48 +108,29 @@ pb' = Phonebook
       }
   ]
 
-effCb :: DiffCb Effect
-effCb = {onAtom, onLength, onConstructor}
-  where
-  onAtom a1 a2
-    | a1 == a2 = log "All good ✓"
-    | otherwise =
-      log $ "Atoms not equal! " <> show a1 <> " vs. " <> show a2
-  onLength m n
-    | m == n = log "All good ✓"
-    | otherwise =
-      log $ "Lengths not equal! " <> show m <> " vs. " <> show n
-  onConstructor c1 c2
-    | c1 == c2 = log "All good ✓"
-    | otherwise =
-      log $ "Constructors not equal! " <> show c1 <> " vs. " <> show c2
-
 data Diff
-  = Atomic Atom Atom
-  | Length Int Int
-  | Constructor String String
+  = Atomizable Atomizable Atomizable
+  | Orderable Orderable Orderable
+  | Indexable Indexable Indexable
 
-writerCb :: DiffCb (WriterT (Array Diff) Effect)
-writerCb = {onAtom, onLength, onConstructor}
+writerCb :: Callback.Callback (WriterT (Array Diff) Effect)
+writerCb = Callback.mk onAtom onSize onIndex
   where
-    onAtom a1 a2 =
-      when (a1 /= a2) do
-        tell [Atomic a1 a2]
-    onLength l1 l2 =
-      when (l1 /= l2) do
-        tell [Length l1 l2]
-    onConstructor c1 c2 =
-      when (c1 /= c2) do
-        tell [Constructor c1 c2]
+    onAtom :: forall a. Atomic a => List Index -> a -> a -> WriterT (Array Diff) Effect Unit
+    onAtom _path a1 a2 =
+      when (atomize a1 /= atomize a2) do
+        tell [Atomizable (Atomic.mk a1) (Atomic.mk a2)]
+    onSize :: forall s. Ordered s => List Index -> s -> s -> WriterT (Array Diff) Effect Unit
+    onSize _path l1 l2 =
+      when (size l1 /= size l2) do
+        tell [Orderable (Ordered.mk l1) (Ordered.mk l2)]
+    onIndex :: forall i i'. Indexed i => Indexed i' => List Index -> i -> i' -> WriterT (Array Diff) Effect Unit
+    onIndex _path c1 c2 =
+      when (index c1 /= index c2) do
+        tell [Indexable (Index.mk c1) (Index.mk c2)]
 
 main :: Effect Unit
 main = do
-  diff effCb pb pb'
-  arr <- execWriterT (diff writerCb pb pb')
-  for_ arr case _ of
-    Atomic a1 a2 -> log $
-      "Atoms different: " <> show a1 <> " vs. " <> show a2
-    Length l1 l2 -> log $
-      "Lengths different: " <> show l1 <> " vs. " <> show l2
-    Constructor c1 c2 -> log $
-      "Constructors different: " <> show c1 <> " vs. " <> show c2
+  Test.Effect.main
+  Test.Writer.main
+  Test.Coverage.main

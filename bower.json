@@ -10,7 +10,11 @@
     "purescript-prelude": "^4.1.0",
     "purescript-arrays": "^5.1.0",
     "purescript-transformers": "^4.1.0",
-    "purescript-foreign-object": "^1.1.0"
+    "purescript-foreign-object": "^1.1.0",
+    "purescript-ordered-collections": "^1.4.0",
+    "purescript-strings": "^4.0.1",
+    "purescript-variant": "^5.2.0",
+    "purescript-generics-rep": "^6.1.1"
   },
   "devDependencies": {
     "purescript-console": "^4.2.0",
